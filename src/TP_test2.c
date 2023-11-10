@@ -8,7 +8,7 @@
 #include "lpc17xx_exti.h"
 
 #define ADC_RATE	750
-#define LISTSIZE	6000
+#define LISTSIZE	8000
 #define TIMEOUT		33250
 
 void configADC(void);
@@ -255,6 +255,7 @@ void EINT0_IRQHandler(void)
 	 */
 
 	GPDMA_ChannelCmd(0, DISABLE);
+	*samples_count = 0;
 	cleanListADC();
 
 	NVIC_EnableIRQ(ADC_IRQn);
