@@ -21,11 +21,20 @@ void configDMA(void);
 void cleanListADC(void);
 void moveListDAC(void);
 
+/* DEBUG. */
+__IO uint32_t *samples_count = (__IO uint32_t *)0x2007C000;
+
 /* Esta lista guarda el sonido grabado por el microfono. */
 __IO uint32_t listADC[LISTSIZE] = {0};
 
-/* Variables globales para poder debugear, podrian ser statics dentro del handler. */
-uint32_t	listADC_index	= 0;
+
+
+/* ------------------------------------------------
+ * ------------------------------------------------
+ * --------------------MAIN------------------------
+ * ------------------------------------------------
+ * ------------------------------------------------
+ */
 
 int main()
 {
@@ -46,7 +55,9 @@ int main()
 
 
 /* ------------------------------------------------
- * 					FUNCTIONS
+ * ------------------------------------------------
+ * -----------------FUNCTIONS----------------------
+ * ------------------------------------------------
  * ------------------------------------------------
  */
 
@@ -70,7 +81,9 @@ void moveListDAC(void)
 
 
 /* ------------------------------------------------
- * 					CONFIG
+ * ------------------------------------------------
+ * ------------------CONFIGS-----------------------
+ * ------------------------------------------------
  * ------------------------------------------------
  */
 void configGPIO(void)
@@ -137,6 +150,10 @@ void configDAC(void)
 
 void configDMA()
 {
+	/* Buffer circular que lee los datos grabados por el ADC
+	 * y los convierte con el DAC.
+	 */
+
 	GPDMA_LLI_Type LLI1;
 	LLI1.SrcAddr = (uint32_t) listADC;
 	LLI1.DstAddr = (uint32_t) &LPC_DAC->DACR;
@@ -203,7 +220,9 @@ void configEINT1(void)
 
 
 /* ------------------------------------------------
- * 					HANDLERS
+ * ------------------------------------------------
+ * -----------------HANDLERS-----------------------
+ * ------------------------------------------------
  * ------------------------------------------------
  */
 
@@ -211,16 +230,15 @@ void configEINT1(void)
 void ADC_IRQHandler(void)
 {
 	/* Tomamos una muestra del ADC y la guardamos en el array sin superar el limite de muestras. */
-	static uint32_t count = 0;
 
-	if (count <= LISTSIZE)
+	if (*samples_count <= LISTSIZE)
 	{
-		listADC[count] = ((LPC_ADC->ADDR0)>>6) & 0x3FF;
-		count++;
+		listADC[*samples_count] = ((LPC_ADC->ADDR0)>>6) & 0x3FF;
+		(*samples_count)++;
 	}
 	else
 	{
-		count = 0;
+		*samples_count = 0;
 		NVIC_DisableIRQ(ADC_IRQn);
 		moveListDAC();
 	}
@@ -231,17 +249,11 @@ void ADC_IRQHandler(void)
 
 void EINT0_IRQHandler(void)
 {
-	static uint32_t flag = 0;
+	/* Comenzamos a grabar un sonido por el ADC.
+	 * Al llenarse el array de valores se detiene automaticamente la grabacion a
+	 * la espera de poner en play el sonido.
+	 */
 
-	if ( flag == 0)
-	{
-		flag++;
-		return;
-	}
-
-	/* Comenzamos a grabar un sonido por el ADC. */
-
-	listADC_index		= 0;
 	GPDMA_ChannelCmd(0, DISABLE);
 	cleanListADC();
 
@@ -251,18 +263,21 @@ void EINT0_IRQHandler(void)
 
 void EINT1_IRQHandler(void)
 {
-	static uint32_t flag = 1;
+	/* Si esta reproduciendo sonido, deshabilita el canal y baja a 0 la salida.
+	 * Si esta en pausa, pone en play la reproduccion de sonido.
+	 */
+	static uint8_t play = 1;
 
-	if (flag > 0)
-	{
-		configDMA();
-		flag = 0;
-	}
-	else
+	if (play > 0)
 	{
 		GPDMA_ChannelCmd(0, DISABLE);
 		DAC_UpdateValue(LPC_DAC, 0);
-		flag = 1;
+		play = 0;
+	}
+	else
+	{
+		configDMA();
+		play = 1;
 	}
 
 	EXTI_ClearEXTIFlag(EXTI_EINT1);
