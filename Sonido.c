@@ -18,13 +18,15 @@ void configADC();
 void configTIMER();
 uint32_t map(uint32_t x, uint32_t in_min, uint32_t in_max, uint32_t out_min, uint32_t out_max);
 
-
+//uint32_t sinSamples[NUM_SINE_SAMPLE];
 uint32_t sinSamples[NUM_SINE_SAMPLE] = {511, 564, 617, 669, 719, 767, 812, 853, 891, 925, 954, 978, 997, 1011, 1020, 1023,
 						   1020, 1011, 997, 978, 954, 925, 891, 853, 812, 767, 719, 669, 617, 564, 511, 458,
 						   405, 353, 303, 255, 210, 169, 131, 97, 68, 44, 25, 11, 2, 0, 2, 11, 25, 44, 68,
 						   97, 131, 169, 210, 255, 303, 353, 405, 458};
 
-__IO uint16_t ADC0Value = 0;
+__IO uint32_t ADCVAL	= 0;
+__IO uint32_t ADCVALMAP = 0;
+__IO uint32_t TIMEOUT	= 0;
 
 int main()
 {
@@ -77,9 +79,7 @@ void configDAC()
 	dacCfg.DMA_ENA = SET;
 	DAC_Init(LPC_DAC);
 	/*Set timeout*/
-	uint32_t tmp;
-	tmp = (PCLK_DAC_IN_MHZ * 1000000)/(SINE_FREQ_IN_HZ * NUM_SINE_SAMPLE);
-	DAC_SetDMATimeOut(LPC_DAC, tmp);
+	DAC_SetDMATimeOut(LPC_DAC, ((PCLK_DAC_IN_MHZ * 1000000)/(SINE_FREQ_IN_HZ * NUM_SINE_SAMPLE)));
 	DAC_ConfigDAConverterControl(LPC_DAC, &dacCfg);
 
 }
@@ -144,11 +144,12 @@ void configTIMER(void){
 
 void ADC_IRQHandler()
 {
-	static uint32_t tmp = 0;
-	tmp = ((LPC_ADC->ADDR0)>>6) & 0x3FF;
-	ADC0Value = map(tmp, 0, 1024, 10, 300);
-
-	DAC_UpdateValue(LPC_DAC, (PCLK_DAC_IN_MHZ * 1000000)/(ADC0Value * NUM_SINE_SAMPLE));
+	GPDMA_ChannelCmd(0, DISABLE);
+	ADCVAL 		= ((LPC_ADC->ADDR0)>>6) & 0x3FF;
+	ADCVALMAP	= map(ADCVAL, 0, 1024, 10, 100);
+	TIMEOUT		= (PCLK_DAC_IN_MHZ * 1000000)/(ADCVALMAP * NUM_SINE_SAMPLE);
+	DAC_SetDMATimeOut(LPC_DAC, TIMEOUT);
+	configDMA();
 
 	LPC_ADC->ADGDR &= LPC_ADC->ADGDR;
 	return;
@@ -159,4 +160,3 @@ uint32_t map(uint32_t x, uint32_t in_min, uint32_t in_max, uint32_t out_min, uin
 {
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
-

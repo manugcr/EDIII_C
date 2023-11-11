@@ -88,7 +88,7 @@ void moveListDAC(void)
  */
 void configGPIO(void)
 {
-	/* Set P0.23 como entrada AD0.0 */
+	/* Set P0.23 como AD0.0 */
 	PINSEL_CFG_Type pinCFG;
 	pinCFG.Funcnum		= PINSEL_FUNC_1;
 	pinCFG.OpenDrain	= PINSEL_PINMODE_NORMAL;
@@ -105,7 +105,7 @@ void configGPIO(void)
 	pinCFG.Portnum		= PINSEL_PORT_2;
 	PINSEL_ConfigPin(&pinCFG);
 
-	/* Set P2.11 como EINT1*/
+	/* Set P2.11 como EINT1 */
 	pinCFG.Funcnum		= PINSEL_FUNC_1;
 	pinCFG.OpenDrain	= PINSEL_PINMODE_NORMAL;
 	pinCFG.Pinmode		= PINSEL_PINMODE_PULLDOWN;
@@ -113,13 +113,21 @@ void configGPIO(void)
 	pinCFG.Portnum		= PINSEL_PORT_2;
 	PINSEL_ConfigPin(&pinCFG);
 
-	//Se configura P0.26 como AOUT
+	/* Set P0.26 como AD0.0 */
 	pinCFG.Funcnum		= PINSEL_FUNC_2;
 	pinCFG.OpenDrain	= PINSEL_PINMODE_NORMAL;
 	pinCFG.Pinmode		= PINSEL_PINMODE_TRISTATE;
 	pinCFG.Pinnum		= PINSEL_PIN_26;
 	pinCFG.Portnum		= PINSEL_PORT_0;
 	PINSEL_ConfigPin(&pinCFG);
+
+	/* P.022 Output LED */
+	LPC_GPIO0->FIODIR |= (1<<22);	// Led Rojo
+	LPC_GPIO3->FIODIR |= (1<<25);	// Led Verde
+	LPC_GPIO3->FIODIR |= (1<<26);	// Led Azul
+	LPC_GPIO0->FIOSET |= (1<<22);  	// Apaga el led rojo.
+	LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
+	LPC_GPIO3->FIOSET |= (1<<26);  	// Apaga el led azul.
 }
 
 
@@ -238,6 +246,9 @@ void ADC_IRQHandler(void)
 	}
 	else
 	{
+		LPC_GPIO0->FIOSET |= (1<<22);  	// Apaga el led rojo.
+		LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
+		LPC_GPIO3->FIOCLR |= (1<<26); 	// Prende el led azul.
 		*samples_count = 0;
 		NVIC_DisableIRQ(ADC_IRQn);
 		moveListDAC();
@@ -254,6 +265,9 @@ void EINT0_IRQHandler(void)
 	 * la espera de poner en play el sonido.
 	 */
 
+	LPC_GPIO0->FIOSET |= (1<<22);  	// Apaga el led rojo.
+	LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
+	LPC_GPIO3->FIOSET |= (1<<26);  	// Apaga el led azul.
 	GPDMA_ChannelCmd(0, DISABLE);
 	*samples_count = 0;
 	cleanListADC();
@@ -271,12 +285,18 @@ void EINT1_IRQHandler(void)
 
 	if (play > 0)
 	{
+		LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
+		LPC_GPIO3->FIOSET |= (1<<26);  	// Apaga el led azul.
+		LPC_GPIO0->FIOCLR |= (1<<22);	// Prende el led rojo.
 		GPDMA_ChannelCmd(0, DISABLE);
 		DAC_UpdateValue(LPC_DAC, 0);
 		play = 0;
 	}
 	else
 	{
+		LPC_GPIO0->FIOSET |= (1<<22);  	// Apaga el led rojo.
+		LPC_GPIO3->FIOSET |= (1<<26);  	// Apaga el led azul.
+		LPC_GPIO3->FIOCLR |= (1<<25);	// Prende el led verde.
 		configDMA();
 		play = 1;
 	}
