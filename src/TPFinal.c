@@ -17,9 +17,11 @@ void configGPIO(void);
 void configEINT0(void);
 void configEINT1(void);
 void configDMA(void);
+void configNVIC(void);
 
 void cleanListADC(void);
 void moveListDAC(void);
+void buttonDebounce(void);
 
 /* DEBUG. */
 __IO uint32_t *samples_count = (__IO uint32_t *)0x2007C000;
@@ -29,13 +31,13 @@ __IO uint32_t listADC[LISTSIZE] = {0};
 
 
 
-/* ------------------------------------------------
- * ------------------------------------------------
- * --------------------MAIN------------------------
- * ------------------------------------------------
- * ------------------------------------------------
- */
 
+/* ------------------------------------------------------------------------------------------------
+ * ------------------------------------------------------------------------------------------------
+ * --------------------------------------------MAIN------------------------------------------------
+ * ------------------------------------------------------------------------------------------------
+ * ------------------------------------------------------------------------------------------------
+ */
 int main()
 {
 	configGPIO();
@@ -43,10 +45,11 @@ int main()
 	configEINT1();
 	configADC();
 	configDAC();
+	configNVIC();
 
 	while(1)
 	{
-
+		// idle...
 	}
 
 
@@ -54,16 +57,19 @@ int main()
 }
 
 
-/* ------------------------------------------------
- * ------------------------------------------------
- * -----------------FUNCTIONS----------------------
- * ------------------------------------------------
- * ------------------------------------------------
- */
 
+
+/* ------------------------------------------------------------------------------------------------
+ * ------------------------------------------------------------------------------------------------
+ * ------------------------------------------FUNCTIONS---------------------------------------------
+ * ------------------------------------------------------------------------------------------------
+ * ------------------------------------------------------------------------------------------------
+ */
 void cleanListADC(void)
 {
-    for (int i = 0; i < LISTSIZE; i++)
+	/* Rellenar con ceros la lista del ADC. */
+
+    for (uint32_t i = 0; i < LISTSIZE; i++)
     {
     	listADC[i] = 0;
     }
@@ -72,19 +78,30 @@ void cleanListADC(void)
 
 void moveListDAC(void)
 {
-	for(uint32_t i = 0; i<LISTSIZE; i++)
+	/* Desplazamos los valor de la lista 6 lugares, 4 para el DAC y 2 mas para recortar los LSB. */
+
+	for (uint32_t i = 0; i < LISTSIZE; i++)
 	{
 		listADC[i] = listADC[i]<<6;
 	}
 	return;
 }
 
+void buttonDebounce(void)
+{
+	/* Delay para antirrebote del botones. */
 
-/* ------------------------------------------------
- * ------------------------------------------------
- * ------------------CONFIGS-----------------------
- * ------------------------------------------------
- * ------------------------------------------------
+    for (uint32_t i = 0; i < 50000; i++){}
+}
+
+
+
+
+/* ------------------------------------------------------------------------------------------------
+ * ------------------------------------------------------------------------------------------------
+ * -------------------------------------------CONFIGS----------------------------------------------
+ * ------------------------------------------------------------------------------------------------
+ * ------------------------------------------------------------------------------------------------
  */
 void configGPIO(void)
 {
@@ -133,13 +150,15 @@ void configGPIO(void)
 
 void configADC(void)
 {
+	/* El ADC se utiliza en modo burst para tener el maximo de resolucion.
+	 * La interrupcion se activa en configNVIC() y comienza apagada ya que se prende con el pulsador en EINT0.
+	 */
+
 	ADC_Init(LPC_ADC, ADC_RATE);
 	ADC_StartCmd(LPC_ADC, ADC_START_CONTINUOUS);
 	ADC_ChannelCmd(LPC_ADC, 0, ENABLE);
 	ADC_BurstCmd(LPC_ADC, ENABLE);
 	ADC_IntConfig(LPC_ADC, ADC_ADINTEN0, ENABLE);
-	LPC_ADC->ADGDR &= LPC_ADC->ADGDR;
-	NVIC_DisableIRQ(ADC_IRQn);
 }
 
 
@@ -148,41 +167,39 @@ void configDAC(void)
 	DAC_CONVERTER_CFG_Type dacCFG;
 	dacCFG.CNT_ENA = SET;
 	dacCFG.DMA_ENA = SET;
-	DAC_Init(LPC_DAC);
 
-	/* VER COMO CALCULAR ESTO. */
-	DAC_SetDMATimeOut(LPC_DAC, TIMEOUT);
+	DAC_Init(LPC_DAC);
+	DAC_SetDMATimeOut(LPC_DAC, TIMEOUT);				/* REVISAR CALCULO DE TIMEOUT. */
 	DAC_ConfigDAConverterControl(LPC_DAC, &dacCFG);
 }
 
 
 void configDMA()
 {
-	/* Buffer circular que lee los datos grabados por el ADC
-	 * y los convierte con el DAC.
+	/* Buffer circular que lee los datos grabados por el ADC y los convierte con el DAC.
+	 * Arranca apagado por que la reproduccion inicia al apretar el boton EINT1.
 	 */
 
 	GPDMA_LLI_Type LLI1;
-	LLI1.SrcAddr = (uint32_t) listADC;
-	LLI1.DstAddr = (uint32_t) &LPC_DAC->DACR;
-	LLI1.NextLLI = (uint32_t) &LLI1;
-	LLI1.Control = LISTSIZE
-				   | (2<<18) //source width 32 bits
-				   | (2<<21) //dest width 32 bits
-				   | (1<<26); //source increment
+	LLI1.SrcAddr			= (uint32_t) listADC;
+	LLI1.DstAddr			= (uint32_t) &LPC_DAC->DACR;
+	LLI1.NextLLI			= (uint32_t) &LLI1;
+	LLI1.Control			= LISTSIZE
+							| (2<<18)	// Source width 32 bits
+							| (2<<21)	// Dest width 32 bits
+							| (1<<26);	// Source increment
 
 	GPDMA_Init();
-
 	GPDMA_Channel_CFG_Type GPDMACfg;
-	GPDMACfg.ChannelNum = 0;
-	GPDMACfg.SrcMemAddr = (uint32_t)listADC;
-	GPDMACfg.DstMemAddr = 0;
-	GPDMACfg.TransferSize = LISTSIZE;
-	GPDMACfg.TransferWidth = 0;
-	GPDMACfg.TransferType = GPDMA_TRANSFERTYPE_M2P;
-	GPDMACfg.SrcConn = 0;
-	GPDMACfg.DstConn = GPDMA_CONN_DAC;
-	GPDMACfg.DMALLI = (uint32_t)&LLI1;
+	GPDMACfg.ChannelNum		= 0;
+	GPDMACfg.SrcMemAddr		= (uint32_t)listADC;
+	GPDMACfg.DstMemAddr		= 0;
+	GPDMACfg.TransferSize	= LISTSIZE;
+	GPDMACfg.TransferWidth	= 0;
+	GPDMACfg.TransferType	= GPDMA_TRANSFERTYPE_M2P;
+	GPDMACfg.SrcConn		= 0;
+	GPDMACfg.DstConn		= GPDMA_CONN_DAC;
+	GPDMACfg.DMALLI			= (uint32_t)&LLI1;
 	GPDMA_Setup(&GPDMACfg);
 	GPDMA_ChannelCmd(0, ENABLE);
 }
@@ -191,9 +208,7 @@ void configDMA()
 void configEINT0(void)
 {
 	/* Interrupcion para inicializar la grabacion y el ADC.
-	 *
-	 * Limpiar la flag DESPUES de el EXTI_Config();
-	 *
+	 * Las interrupciones se activan en configNVIC()
 	 */
 
 	EXTI_InitTypeDef exti;
@@ -202,18 +217,13 @@ void configEINT0(void)
 	exti.EXTI_Line		= EXTI_EINT0;
 
 	EXTI_Config(&exti);
-	EXTI_ClearEXTIFlag(EXTI_EINT0);
-	NVIC_EnableIRQ(EINT0_IRQn);
-
 }
 
 
 void configEINT1(void)
 {
 	/* Interrupcion para poner play/pausa el sonido.
-	 *
-	 * Limpiar la flag DESPUES de el EXTI_Config();
-	 *
+	 * Las interrupciones se activan en configNVIC()
 	 */
 
 	EXTI_InitTypeDef exti;
@@ -222,19 +232,30 @@ void configEINT1(void)
 	exti.EXTI_Line		= EXTI_EINT1;
 
 	EXTI_Config(&exti);
+}
+
+
+void configNVIC(void)
+{
+	LPC_ADC->ADGDR &= LPC_ADC->ADGDR;
+	NVIC_DisableIRQ(ADC_IRQn);
+
+	EXTI_ClearEXTIFlag(EXTI_EINT0);
+	NVIC_EnableIRQ(EINT0_IRQn);
+
 	EXTI_ClearEXTIFlag(EXTI_EINT1);
 	NVIC_EnableIRQ(EINT1_IRQn);
 }
 
 
-/* ------------------------------------------------
- * ------------------------------------------------
- * -----------------HANDLERS-----------------------
- * ------------------------------------------------
- * ------------------------------------------------
+
+
+/* ------------------------------------------------------------------------------------------------
+ * ------------------------------------------------------------------------------------------------
+ * ------------------------------------------HANDLERS----------------------------------------------
+ * ------------------------------------------------------------------------------------------------
+ * ------------------------------------------------------------------------------------------------
  */
-
-
 void ADC_IRQHandler(void)
 {
 	/* Tomamos una muestra del ADC y la guardamos en el array sin superar el limite de muestras. */
@@ -265,6 +286,8 @@ void EINT0_IRQHandler(void)
 	 * la espera de poner en play el sonido.
 	 */
 
+	buttonDebounce();
+
 	LPC_GPIO0->FIOSET |= (1<<22);  	// Apaga el led rojo.
 	LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
 	LPC_GPIO3->FIOSET |= (1<<26);  	// Apaga el led azul.
@@ -281,7 +304,9 @@ void EINT1_IRQHandler(void)
 	/* Si esta reproduciendo sonido, deshabilita el canal y baja a 0 la salida.
 	 * Si esta en pausa, pone en play la reproduccion de sonido.
 	 */
-	static uint8_t play = 1;
+	static uint8_t play = 0;
+
+	buttonDebounce();
 
 	if (play > 0)
 	{
