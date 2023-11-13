@@ -7,9 +7,10 @@
 #include "lpc17xx_pinsel.h"
 #include "lpc17xx_exti.h"
 
-#define ADC_RATE	700
-#define LISTSIZE	4000
-#define TIMEOUT		10000
+#define ADC_RATE	4000
+#define LISTSIZE	10000
+#define TIMEOUT		8000
+
 #define NUM_LISTS	3
 
 void configADC(void);
@@ -19,7 +20,6 @@ void configEINT0(void);
 void configEINT1(void);
 void configDMA(uint16_t listADC[]);
 void configNVIC(void);
-uint32_t map(uint32_t x, uint32_t in_min, uint32_t in_max, uint32_t out_min, uint32_t out_max);
 
 void cleanListADC(void);
 void moveListDAC(void);
@@ -31,12 +31,9 @@ __IO uint32_t *samples_count = (__IO uint32_t *)0x2007C000;
 /* Esta lista guarda el sonido grabado por el microfono. */
 __IO uint16_t listADC[LISTSIZE] = {0};
 
-uint32_t ADCVAL 	= 0;
-uint32_t ADCVALMAP	= 0;
-__IO uint8_t  RECORDING	= 0;
-
 GPDMA_LLI_Type LLI_Array[NUM_LISTS];
 GPDMA_Channel_CFG_Type dmaCFG;
+
 
 /* ------------------------------------------------------------------------------------------------
  * ------------------------------------------------------------------------------------------------
@@ -99,11 +96,6 @@ void buttonDebounce(void)
     for (uint32_t i = 0; i < 50000; i++){}
 }
 
-uint32_t map(uint32_t x, uint32_t in_min, uint32_t in_max, uint32_t out_min, uint32_t out_max)
-{
-  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-}
-
 
 
 
@@ -121,14 +113,6 @@ void configGPIO(void)
 	pinCFG.OpenDrain	= PINSEL_PINMODE_NORMAL;
 	pinCFG.Pinmode		= PINSEL_PINMODE_TRISTATE;
 	pinCFG.Pinnum		= PINSEL_PIN_23;
-	pinCFG.Portnum		= PINSEL_PORT_0;
-	PINSEL_ConfigPin(&pinCFG);
-
-	/* Set P0.24 como AD0.1 */
-	pinCFG.Funcnum		= PINSEL_FUNC_1;
-	pinCFG.OpenDrain	= PINSEL_PINMODE_NORMAL;
-	pinCFG.Pinmode		= PINSEL_PINMODE_TRISTATE;
-	pinCFG.Pinnum		= PINSEL_PIN_24;
 	pinCFG.Portnum		= PINSEL_PORT_0;
 	PINSEL_ConfigPin(&pinCFG);
 
@@ -175,10 +159,8 @@ void configADC(void)
 	ADC_Init(LPC_ADC, ADC_RATE);
 	ADC_StartCmd(LPC_ADC, ADC_START_CONTINUOUS);
 	ADC_ChannelCmd(LPC_ADC, 0, ENABLE);
-	//ADC_ChannelCmd(LPC_ADC, 1, ENABLE);
 	ADC_BurstCmd(LPC_ADC, ENABLE);
 	ADC_IntConfig(LPC_ADC, ADC_ADINTEN0, ENABLE);
-	//ADC_IntConfig(LPC_ADC, ADC_ADINTEN1, ENABLE);
 }
 
 
@@ -288,32 +270,20 @@ void ADC_IRQHandler(void)
 {
 	/* Tomamos una muestra del ADC y la guardamos en el array sin superar el limite de muestras. */
 
-	//if (RECORDING > 0)
-	//{
-		if (*samples_count <= LISTSIZE)
-		{
-			LPC_GPIO3->FIOCLR |= (1<<26); 	// Prende el led azul.
-			listADC[*samples_count] = ((LPC_ADC->ADDR0)>>6) & 0x3FF;
-			(*samples_count)++;
-		}
-		else
-		{
-			LPC_GPIO0->FIOCLR |= (1<<22);  	// Prende el led rojo.
-			LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
-			LPC_GPIO3->FIOSET |= (1<<26); 	// Apaga el led azul.
-			*samples_count = 0;
-			RECORDING = 0;
-			moveListDAC();
-		}
-
-	//}
-//	else
-//	{
-//		ADCVAL 		= ((LPC_ADC->ADDR1)>>6) & 0x3FF;
-//		ADCVALMAP	= map(ADCVAL, 0, 1024, 8000, 12000);
-//		DAC_SetDMATimeOut(LPC_DAC, ADCVALMAP);
-//	}
-
+	if (*samples_count <= LISTSIZE)
+	{
+		listADC[*samples_count] = ((LPC_ADC->ADDR0)>>6) & 0x3FF;
+		(*samples_count)++;
+	}
+	else
+	{
+		LPC_GPIO0->FIOSET |= (1<<22);  	// Apaga el led rojo.
+		LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
+		LPC_GPIO3->FIOCLR |= (1<<26); 	// Prende el led azul.
+		*samples_count = 0;
+		NVIC_DisableIRQ(ADC_IRQn);
+		moveListDAC();
+	}
 
 	LPC_ADC->ADGDR &= LPC_ADC->ADGDR;
 }
@@ -325,8 +295,6 @@ void EINT0_IRQHandler(void)
 	 * Al llenarse el array de valores se detiene automaticamente la grabacion a
 	 * la espera de poner en play el sonido.
 	 */
-
-	RECORDING = 1;
 
 	buttonDebounce();
 
@@ -350,7 +318,7 @@ void EINT1_IRQHandler(void)
 
 	buttonDebounce();
 
-	if (PLAY > 0) //Esta en pausa
+	if (PLAY > 0)
 	{
 		LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
 		LPC_GPIO3->FIOSET |= (1<<26);  	// Apaga el led azul.
@@ -359,7 +327,7 @@ void EINT1_IRQHandler(void)
 		DAC_UpdateValue(LPC_DAC, 0);
 		PLAY = 0;
 	}
-	else //se reproduce
+	else
 	{
 		LPC_GPIO0->FIOSET |= (1<<22);  	// Apaga el led rojo.
 		LPC_GPIO3->FIOSET |= (1<<26);  	// Apaga el led azul.
@@ -370,3 +338,4 @@ void EINT1_IRQHandler(void)
 
 	EXTI_ClearEXTIFlag(EXTI_EINT1);
 }
+

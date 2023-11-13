@@ -7,19 +7,17 @@
 #include "lpc17xx_pinsel.h"
 #include "lpc17xx_exti.h"
 
-#define ADC_RATE	700
-#define LISTSIZE	4000
-#define TIMEOUT		10000
-#define NUM_LISTS	3
+#define ADC_RATE	4000
+#define LISTSIZE	10000
+#define TIMEOUT		6000
 
 void configADC(void);
 void configDAC(void);
 void configGPIO(void);
 void configEINT0(void);
 void configEINT1(void);
-void configDMA(uint16_t listADC[]);
+void configDMA(void);
 void configNVIC(void);
-uint32_t map(uint32_t x, uint32_t in_min, uint32_t in_max, uint32_t out_min, uint32_t out_max);
 
 void cleanListADC(void);
 void moveListDAC(void);
@@ -31,12 +29,6 @@ __IO uint32_t *samples_count = (__IO uint32_t *)0x2007C000;
 /* Esta lista guarda el sonido grabado por el microfono. */
 __IO uint16_t listADC[LISTSIZE] = {0};
 
-uint32_t ADCVAL 	= 0;
-uint32_t ADCVALMAP	= 0;
-__IO uint8_t  RECORDING	= 0;
-
-GPDMA_LLI_Type LLI_Array[NUM_LISTS];
-GPDMA_Channel_CFG_Type dmaCFG;
 
 /* ------------------------------------------------------------------------------------------------
  * ------------------------------------------------------------------------------------------------
@@ -99,11 +91,6 @@ void buttonDebounce(void)
     for (uint32_t i = 0; i < 50000; i++){}
 }
 
-uint32_t map(uint32_t x, uint32_t in_min, uint32_t in_max, uint32_t out_min, uint32_t out_max)
-{
-  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-}
-
 
 
 
@@ -121,14 +108,6 @@ void configGPIO(void)
 	pinCFG.OpenDrain	= PINSEL_PINMODE_NORMAL;
 	pinCFG.Pinmode		= PINSEL_PINMODE_TRISTATE;
 	pinCFG.Pinnum		= PINSEL_PIN_23;
-	pinCFG.Portnum		= PINSEL_PORT_0;
-	PINSEL_ConfigPin(&pinCFG);
-
-	/* Set P0.24 como AD0.1 */
-	pinCFG.Funcnum		= PINSEL_FUNC_1;
-	pinCFG.OpenDrain	= PINSEL_PINMODE_NORMAL;
-	pinCFG.Pinmode		= PINSEL_PINMODE_TRISTATE;
-	pinCFG.Pinnum		= PINSEL_PIN_24;
 	pinCFG.Portnum		= PINSEL_PORT_0;
 	PINSEL_ConfigPin(&pinCFG);
 
@@ -175,10 +154,8 @@ void configADC(void)
 	ADC_Init(LPC_ADC, ADC_RATE);
 	ADC_StartCmd(LPC_ADC, ADC_START_CONTINUOUS);
 	ADC_ChannelCmd(LPC_ADC, 0, ENABLE);
-	//ADC_ChannelCmd(LPC_ADC, 1, ENABLE);
 	ADC_BurstCmd(LPC_ADC, ENABLE);
 	ADC_IntConfig(LPC_ADC, ADC_ADINTEN0, ENABLE);
-	//ADC_IntConfig(LPC_ADC, ADC_ADINTEN1, ENABLE);
 }
 
 
@@ -194,40 +171,34 @@ void configDAC(void)
 }
 
 
-void configDMA(uint16_t listADC[])
+void configDMA()
 {
-	for (int i = 0; i < NUM_LISTS; i++)
-	{
-		LLI_Array[i].DstAddr = (uint32_t) &(LPC_DAC->DACR);
-		LLI_Array[i].SrcAddr = (uint32_t)(listADC + i * 4095);
+	/* Buffer circular que lee los datos grabados por el ADC y los convierte con el DAC.
+	 * Arranca apagado por que la reproduccion inicia al apretar el boton EINT1.
+	 */
 
-		if (i == (NUM_LISTS - 1)) {
-			LLI_Array[i].NextLLI = (uint32_t)&LLI_Array[0];
-		} else {
-			LLI_Array[i].NextLLI = (uint32_t)&LLI_Array[i + 1];
-		}
-
-		LLI_Array[i].Control = 4095
-							 | (1 << 18) // source width 16 bit
-							 | (1 << 22) // dest width = word 32 bits
-							 | (1 << 26); // source increment
-	}
-
-
-	dmaCFG.ChannelNum			= 0;
-	dmaCFG.TransferSize			= 4095;
-	dmaCFG.TransferWidth		= 0;
-	dmaCFG.TransferType			= GPDMA_TRANSFERTYPE_M2P;
-	dmaCFG.SrcConn				= 0;
-	dmaCFG.DstConn				= GPDMA_CONN_DAC;
-	dmaCFG.SrcMemAddr			= (uint32_t) listADC;
-	dmaCFG.DstMemAddr			= 0;
-	dmaCFG.DMALLI				= (uint32_t) &LLI_Array[0];
+	GPDMA_LLI_Type LLI1;
+	LLI1.SrcAddr			= (uint32_t) listADC;
+	LLI1.DstAddr			= (uint32_t) &LPC_DAC->DACR;
+	LLI1.NextLLI			= (uint32_t) &LLI1;
+	LLI1.Control			= LISTSIZE
+							| (2<<18)	// Source width 32 bits
+							| (2<<21)	// Dest width 32 bits
+							| (1<<26);	// Source increment
 
 	GPDMA_Init();
-	GPDMA_Setup(&dmaCFG);
+	GPDMA_Channel_CFG_Type GPDMACfg;
+	GPDMACfg.ChannelNum		= 0;
+	GPDMACfg.SrcMemAddr		= (uint32_t)listADC;
+	GPDMACfg.DstMemAddr		= 0;
+	GPDMACfg.TransferSize	= LISTSIZE;
+	GPDMACfg.TransferWidth	= 0;
+	GPDMACfg.TransferType	= GPDMA_TRANSFERTYPE_M2P;
+	GPDMACfg.SrcConn		= 0;
+	GPDMACfg.DstConn		= GPDMA_CONN_DAC;
+	GPDMACfg.DMALLI			= (uint32_t)&LLI1;
+	GPDMA_Setup(&GPDMACfg);
 	GPDMA_ChannelCmd(0, ENABLE);
-	return;
 }
 
 
@@ -288,32 +259,20 @@ void ADC_IRQHandler(void)
 {
 	/* Tomamos una muestra del ADC y la guardamos en el array sin superar el limite de muestras. */
 
-	//if (RECORDING > 0)
-	//{
-		if (*samples_count <= LISTSIZE)
-		{
-			LPC_GPIO3->FIOCLR |= (1<<26); 	// Prende el led azul.
-			listADC[*samples_count] = ((LPC_ADC->ADDR0)>>6) & 0x3FF;
-			(*samples_count)++;
-		}
-		else
-		{
-			LPC_GPIO0->FIOCLR |= (1<<22);  	// Prende el led rojo.
-			LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
-			LPC_GPIO3->FIOSET |= (1<<26); 	// Apaga el led azul.
-			*samples_count = 0;
-			RECORDING = 0;
-			moveListDAC();
-		}
-
-	//}
-//	else
-//	{
-//		ADCVAL 		= ((LPC_ADC->ADDR1)>>6) & 0x3FF;
-//		ADCVALMAP	= map(ADCVAL, 0, 1024, 8000, 12000);
-//		DAC_SetDMATimeOut(LPC_DAC, ADCVALMAP);
-//	}
-
+	if (*samples_count <= LISTSIZE)
+	{
+		listADC[*samples_count] = ((LPC_ADC->ADDR0)>>6) & 0x3FF;
+		(*samples_count)++;
+	}
+	else
+	{
+		LPC_GPIO0->FIOSET |= (1<<22);  	// Apaga el led rojo.
+		LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
+		LPC_GPIO3->FIOCLR |= (1<<26); 	// Prende el led azul.
+		*samples_count = 0;
+		NVIC_DisableIRQ(ADC_IRQn);
+		moveListDAC();
+	}
 
 	LPC_ADC->ADGDR &= LPC_ADC->ADGDR;
 }
@@ -325,8 +284,6 @@ void EINT0_IRQHandler(void)
 	 * Al llenarse el array de valores se detiene automaticamente la grabacion a
 	 * la espera de poner en play el sonido.
 	 */
-
-	RECORDING = 1;
 
 	buttonDebounce();
 
@@ -350,7 +307,7 @@ void EINT1_IRQHandler(void)
 
 	buttonDebounce();
 
-	if (PLAY > 0) //Esta en pausa
+	if (PLAY > 0)
 	{
 		LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
 		LPC_GPIO3->FIOSET |= (1<<26);  	// Apaga el led azul.
@@ -359,14 +316,15 @@ void EINT1_IRQHandler(void)
 		DAC_UpdateValue(LPC_DAC, 0);
 		PLAY = 0;
 	}
-	else //se reproduce
+	else
 	{
 		LPC_GPIO0->FIOSET |= (1<<22);  	// Apaga el led rojo.
 		LPC_GPIO3->FIOSET |= (1<<26);  	// Apaga el led azul.
 		LPC_GPIO3->FIOCLR |= (1<<25);	// Prende el led verde.
-		configDMA(listADC);
+		configDMA();
 		PLAY = 1;
 	}
 
 	EXTI_ClearEXTIFlag(EXTI_EINT1);
 }
+
