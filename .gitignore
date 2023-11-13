@@ -3,3 +3,5 @@ Debug
 .project
 .settings
 *.launch
+./src/cr_startup_lpc175x_6x.c
+./src/crp.c
