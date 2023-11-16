@@ -32,8 +32,7 @@
  *
  * 			Mejoras:
  * 				- Se podrian agregar efectos como distortion, reverb, bit-crush, etc...
- *
- *
+ * 				- Mejorar calidad de sonido.
  *
  */
 
@@ -47,7 +46,7 @@
 #include "lpc17xx_uart.h"
 
 #define ADC_RATE	8000				// A mayor ADCRATE mayor fidelidad de sonido.
-#define LISTSIZE	12000				// No superar los 15k muestras por que se llena la SRAM 32kB.
+#define LISTSIZE	12000 				// No superar los 15k muestras por que se llena la SRAM 32kB.
 #define TIMEOUT		7000				// Arranca por default en un valor, pero el potenciometro lo varia durante la ejecucion.
 #define NUM_LISTS	3					// Cada lista es de 4095 valores.
 
@@ -121,8 +120,8 @@ void cleanListADC(void)
     {
     	listADC[i] = 0;
     }
-
 }
+
 
 void moveListDAC(void)
 {
@@ -135,6 +134,7 @@ void moveListDAC(void)
 	return;
 }
 
+
 void buttonDebounce(void)
 {
 	/* Delay para antirrebote del botones.
@@ -143,6 +143,7 @@ void buttonDebounce(void)
 
     for (uint32_t i = 0; i < 50000; i++){}
 }
+
 
 uint32_t map(uint32_t x, uint32_t in_min, uint32_t in_max, uint32_t out_min, uint32_t out_max)
 {
@@ -259,16 +260,20 @@ void configDMA(__IO uint16_t listADC[])
 		LLI_Array[i].DstAddr = (uint32_t) &(LPC_DAC->DACR);
 		LLI_Array[i].SrcAddr = (uint32_t)(listADC + i * 4095);
 
-		if (i == (NUM_LISTS - 1)) {
+		if (i == (NUM_LISTS - 1))
+		{
 			LLI_Array[i].NextLLI = (uint32_t)&LLI_Array[0];
-		} else {
+		}
+		else
+		{
 			LLI_Array[i].NextLLI = (uint32_t)&LLI_Array[i + 1];
 		}
 
 		LLI_Array[i].Control = 4095
-							 | (1 << 18) // source width 16 bit
-							 | (1 << 22) // dest width = word 32 bits
-							 | (1 << 26); // source increment
+							 | (1 << 18)	// source width 16 bit
+							 | (1 << 22)	// dest width = word 32 bits
+							 | (1 << 26)	// source increment
+							 ;
 	}
 
 	dmaCFG.ChannelNum			= 0;
@@ -335,22 +340,21 @@ void configNVIC(void)
 }
 
 
-void configUART(void){
-
+void configUART(void)
+{
 	UART_CFG_Type      UARTConfigStruct;
 	UART_FIFO_CFG_Type UARTFIFOConfigStruct;
-	//configuracion por defecto:
+	// Configuracion por defecto 9600 baud-rate.
 	UART_ConfigStructInit(&UARTConfigStruct);
-	//inicializa periforico
+	// Inicializa periferico
 	UART_Init(LPC_UART2, &UARTConfigStruct);
-	//Inicializa FIFO
+	// Inicializa FIFO
 	UART_FIFOConfigStructInit(&UARTFIFOConfigStruct);
 	UART_FIFOConfig(LPC_UART2, &UARTFIFOConfigStruct);
 	// Habilita interrupcion por el RX del UART
 	UART_IntConfig(LPC_UART2, UART_INTCFG_RBR, ENABLE);
 	// Habilita interrupcion por el estado de la linea UART
 	UART_IntConfig(LPC_UART2, UART_INTCFG_RLS, ENABLE);
-	return;
 }
 
 
@@ -452,14 +456,15 @@ void EINT1_IRQHandler(void)
 	EXTI_ClearEXTIFlag(EXTI_EINT1);
 }
 
-void UART2_IRQHandler(void){
+void UART2_IRQHandler(void)
+{
 	uint32_t intsrc, tmp, tmp1;
 
 	// Determina la fuente de interrupcion
 	intsrc = UART_GetIntId(LPC_UART2);
 	tmp = intsrc & UART_IIR_INTID_MASK;
 
-	// Evalua Line Status
+	// Evalua Line Status - Received-line status.
 	if (tmp == UART_IIR_INTID_RLS)
 	{
 		tmp1 = UART_GetLineStatus(LPC_UART2);
