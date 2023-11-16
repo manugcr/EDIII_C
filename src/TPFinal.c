@@ -1,42 +1,84 @@
+/*
+ * TRABAJO FINAL ED3
+ *
+ * @brief:	El trabajo consiste en tomar un sonido por un microfono o recibir sus respectivos valores analogicos por UART
+ * 			para luego reproducirlo en un loop al cual se le puede variar la frecuencia asi modificando el sonido, a modo
+ * 			de funcionar como un SAMPLER.
+ *
+ * 			Los valores analogicos de estos sonidos son guardados en un arraylist de un tamanio especifico el cual no deberia
+ * 			superar los ~30kB para no llenar la memoria SRAM.
+ *
+ * 			Para la transmision por UART primero se convierte un archivo MP3/WAV a valores decimales con AUDACITY y HxD. Los
+ * 			valores se envian con un script de python que parsea los mismos y los envia de a 1.
+ *
+ * 			El flujo de ejecucion es:
+ * 				- Recibir el sonido ya sea por el microfono a traves del ADC o desde una pc por UART.
+ * 				- Guardarlo en memoria.
+ * 				- Reproducirse a traves del DAC el cual con DMA lee una linked list que funciona de modo buffer circular.
+ *
+ * 			Modulos utilizados:
+ * 				- ADC
+ * 				- DAC
+ * 				- DMA
+ * 				- UART
+ * 				- Interrupciones externas
+ *
+ * 			Bugs:
+ * 				- Si se declara una linked list por DMA mayor al tamanio maximo que puede almacenar la lista del ADC, el
+ * 				sonido no se reproduce en loop, se reproduce una sola vez y no vuelve a empezar.
+ * 				- Cuando estando en modo pausa, se vuelve al modo play los primeros segundos se escuchan mal.
+ * 				- Si se envian mas valores por UART de los que permite la lista, para se pueden reescribir los primeros
+ * 				y quedar 'desfasada', es decir que no vuelve a iniciar en 0.
+ *
+ * 			Mejoras:
+ * 				- Se podrian agregar efectos como distortion, reverb, bit-crush, etc...
+ *
+ *
+ *
+ */
+
 #include "LPC17xx.h"
 #include "lpc_types.h"
 #include "lpc17xx_adc.h"
 #include "lpc17xx_dac.h"
 #include "lpc17xx_gpdma.h"
-#include "lpc17xx_timer.h"
 #include "lpc17xx_pinsel.h"
 #include "lpc17xx_exti.h"
+#include "lpc17xx_uart.h"
 
-#define ADC_RATE	700
-#define LISTSIZE	4000
-#define TIMEOUT		10000
-#define NUM_LISTS	3
+#define ADC_RATE	8000				// A mayor ADCRATE mayor fidelidad de sonido.
+#define LISTSIZE	12000				// No superar los 15k muestras por que se llena la SRAM 32kB.
+#define TIMEOUT		7000				// Arranca por default en un valor, pero el potenciometro lo varia durante la ejecucion.
+#define NUM_LISTS	3					// Cada lista es de 4095 valores.
 
 void configADC(void);
 void configDAC(void);
 void configGPIO(void);
 void configEINT0(void);
+void configUART(void);
 void configEINT1(void);
-void configDMA(uint16_t listADC[]);
+void configDMA(__IO uint16_t listADC[]);
 void configNVIC(void);
-uint32_t map(uint32_t x, uint32_t in_min, uint32_t in_max, uint32_t out_min, uint32_t out_max);
 
+uint32_t map(uint32_t x, uint32_t in_min, uint32_t in_max, uint32_t out_min, uint32_t out_max);
 void cleanListADC(void);
 void moveListDAC(void);
 void buttonDebounce(void);
 
-/* DEBUG. */
-__IO uint32_t *samples_count = (__IO uint32_t *)0x2007C000;
-
 /* Esta lista guarda el sonido grabado por el microfono. */
 __IO uint16_t listADC[LISTSIZE] = {0};
+__IO uint32_t *samples_count = (__IO uint32_t *)0x2007C000;		// Contador de muestras para la lista del ADC.
 
-uint32_t ADCVAL 	= 0;
-uint32_t ADCVALMAP	= 0;
-__IO uint8_t  RECORDING	= 0;
+/* Variables para la comunicacion UART. */
+uint8_t info[1]		= "";
+uint32_t count_UART	= 0;
+
+/* Variable global para switchear de canal del ADC entre mic y potenciometro. */
+uint8_t RECORDING	= 0;
 
 GPDMA_LLI_Type LLI_Array[NUM_LISTS];
 GPDMA_Channel_CFG_Type dmaCFG;
+
 
 /* ------------------------------------------------------------------------------------------------
  * ------------------------------------------------------------------------------------------------
@@ -51,6 +93,7 @@ int main()
 	configEINT1();
 	configADC();
 	configDAC();
+	configUART();
 	configNVIC();
 
 	while(1)
@@ -94,17 +137,18 @@ void moveListDAC(void)
 
 void buttonDebounce(void)
 {
-	/* Delay para antirrebote del botones. */
+	/* Delay para antirrebote del botones.
+	 * Se deberia hacer con un TIMER, no de esta manera.
+	 */
 
     for (uint32_t i = 0; i < 50000; i++){}
 }
 
 uint32_t map(uint32_t x, uint32_t in_min, uint32_t in_max, uint32_t out_min, uint32_t out_max)
 {
-  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+	/* Convierte el valor recibido a un valor correspondiente dentro de una escala MIN-MAX dada. */
+	return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
-
-
 
 
 /* ------------------------------------------------------------------------------------------------
@@ -115,7 +159,7 @@ uint32_t map(uint32_t x, uint32_t in_min, uint32_t in_max, uint32_t out_min, uin
  */
 void configGPIO(void)
 {
-	/* Set P0.23 como AD0.0 */
+	/* Set P0.23 AD0.0 */
 	PINSEL_CFG_Type pinCFG;
 	pinCFG.Funcnum		= PINSEL_FUNC_1;
 	pinCFG.OpenDrain	= PINSEL_PINMODE_NORMAL;
@@ -124,7 +168,7 @@ void configGPIO(void)
 	pinCFG.Portnum		= PINSEL_PORT_0;
 	PINSEL_ConfigPin(&pinCFG);
 
-	/* Set P0.24 como AD0.1 */
+	/* Set P0.24 AD0.1 */
 	pinCFG.Funcnum		= PINSEL_FUNC_1;
 	pinCFG.OpenDrain	= PINSEL_PINMODE_NORMAL;
 	pinCFG.Pinmode		= PINSEL_PINMODE_TRISTATE;
@@ -132,7 +176,7 @@ void configGPIO(void)
 	pinCFG.Portnum		= PINSEL_PORT_0;
 	PINSEL_ConfigPin(&pinCFG);
 
-	/* Set P2.10 como EINT0*/
+	/* Set P2.10 EINT0*/
 	pinCFG.Funcnum		= PINSEL_FUNC_1;
 	pinCFG.OpenDrain	= PINSEL_PINMODE_NORMAL;
 	pinCFG.Pinmode		= PINSEL_PINMODE_PULLDOWN;
@@ -140,7 +184,7 @@ void configGPIO(void)
 	pinCFG.Portnum		= PINSEL_PORT_2;
 	PINSEL_ConfigPin(&pinCFG);
 
-	/* Set P2.11 como EINT1 */
+	/* Set P2.11 EINT1 */
 	pinCFG.Funcnum		= PINSEL_FUNC_1;
 	pinCFG.OpenDrain	= PINSEL_PINMODE_NORMAL;
 	pinCFG.Pinmode		= PINSEL_PINMODE_PULLDOWN;
@@ -148,7 +192,7 @@ void configGPIO(void)
 	pinCFG.Portnum		= PINSEL_PORT_2;
 	PINSEL_ConfigPin(&pinCFG);
 
-	/* Set P0.26 como AD0.0 */
+	/* Set P0.26 AD0.0 */
 	pinCFG.Funcnum		= PINSEL_FUNC_2;
 	pinCFG.OpenDrain	= PINSEL_PINMODE_NORMAL;
 	pinCFG.Pinmode		= PINSEL_PINMODE_TRISTATE;
@@ -157,12 +201,23 @@ void configGPIO(void)
 	PINSEL_ConfigPin(&pinCFG);
 
 	/* P.022 Output LED */
-	LPC_GPIO0->FIODIR |= (1<<22);	// Led Rojo
-	LPC_GPIO3->FIODIR |= (1<<25);	// Led Verde
-	LPC_GPIO3->FIODIR |= (1<<26);	// Led Azul
-	LPC_GPIO0->FIOSET |= (1<<22);  	// Apaga el led rojo.
-	LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
-	LPC_GPIO3->FIOSET |= (1<<26);  	// Apaga el led azul.
+	LPC_GPIO0->FIODIR 	|= (1<<22);		// Led Rojo
+	LPC_GPIO3->FIODIR 	|= (1<<25);		// Led Verde
+	LPC_GPIO3->FIODIR 	|= (1<<26);		// Led Azul
+	LPC_GPIO0->FIOSET 	|= (1<<22);  	// Apaga el led rojo.
+	LPC_GPIO3->FIOSET 	|= (1<<25);  	// Apaga el led verde.
+	LPC_GPIO3->FIOSET 	|= (1<<26);  	// Apaga el led azul.
+
+	/* Configuracion pin de Tx y Rx */
+	pinCFG.Funcnum		= 1;
+	pinCFG.OpenDrain	= 0;
+	pinCFG.Pinmode		= 0;
+	pinCFG.Pinnum 		= 10;
+	pinCFG.Portnum 		= 0;
+	PINSEL_ConfigPin(&pinCFG);	// Tx
+	pinCFG.Pinnum 		= 11;
+	PINSEL_ConfigPin(&pinCFG);	// Rx
+	return;
 }
 
 
@@ -170,15 +225,18 @@ void configADC(void)
 {
 	/* El ADC se utiliza en modo burst para tener el maximo de resolucion.
 	 * La interrupcion se activa en configNVIC() y comienza apagada ya que se prende con el pulsador en EINT0.
+	 *
+	 * Tenemos dos canales de interrupcion, uno para el mic y otro para el potenciometro, pero
+	 * solamente activamos la interrupcion del microfono, ya que el potenciometro va a depender del estado de
+	 * la variable RECORDING.
 	 */
 
 	ADC_Init(LPC_ADC, ADC_RATE);
 	ADC_StartCmd(LPC_ADC, ADC_START_CONTINUOUS);
 	ADC_ChannelCmd(LPC_ADC, 0, ENABLE);
-	//ADC_ChannelCmd(LPC_ADC, 1, ENABLE);
+	ADC_ChannelCmd(LPC_ADC, 1, ENABLE);
 	ADC_BurstCmd(LPC_ADC, ENABLE);
 	ADC_IntConfig(LPC_ADC, ADC_ADINTEN0, ENABLE);
-	//ADC_IntConfig(LPC_ADC, ADC_ADINTEN1, ENABLE);
 }
 
 
@@ -194,7 +252,7 @@ void configDAC(void)
 }
 
 
-void configDMA(uint16_t listADC[])
+void configDMA(__IO uint16_t listADC[])
 {
 	for (int i = 0; i < NUM_LISTS; i++)
 	{
@@ -212,7 +270,6 @@ void configDMA(uint16_t listADC[])
 							 | (1 << 22) // dest width = word 32 bits
 							 | (1 << 26); // source increment
 	}
-
 
 	dmaCFG.ChannelNum			= 0;
 	dmaCFG.TransferSize			= 4095;
@@ -264,7 +321,7 @@ void configEINT1(void)
 void configNVIC(void)
 {
 	LPC_ADC->ADGDR &= LPC_ADC->ADGDR;
-	NVIC_DisableIRQ(ADC_IRQn);
+	NVIC_EnableIRQ(ADC_IRQn);
 
 	EXTI_ClearEXTIFlag(EXTI_EINT0);
 	NVIC_EnableIRQ(EINT0_IRQn);
@@ -272,7 +329,28 @@ void configNVIC(void)
 	EXTI_ClearEXTIFlag(EXTI_EINT1);
 	NVIC_EnableIRQ(EINT1_IRQn);
 
+	NVIC_EnableIRQ(UART2_IRQn);
+
 	GPDMA_ChannelCmd(0, DISABLE);
+}
+
+
+void configUART(void){
+
+	UART_CFG_Type      UARTConfigStruct;
+	UART_FIFO_CFG_Type UARTFIFOConfigStruct;
+	//configuracion por defecto:
+	UART_ConfigStructInit(&UARTConfigStruct);
+	//inicializa periforico
+	UART_Init(LPC_UART2, &UARTConfigStruct);
+	//Inicializa FIFO
+	UART_FIFOConfigStructInit(&UARTFIFOConfigStruct);
+	UART_FIFOConfig(LPC_UART2, &UARTFIFOConfigStruct);
+	// Habilita interrupcion por el RX del UART
+	UART_IntConfig(LPC_UART2, UART_INTCFG_RBR, ENABLE);
+	// Habilita interrupcion por el estado de la linea UART
+	UART_IntConfig(LPC_UART2, UART_INTCFG_RLS, ENABLE);
+	return;
 }
 
 
@@ -286,34 +364,37 @@ void configNVIC(void)
  */
 void ADC_IRQHandler(void)
 {
+	static uint32_t ADCVAL 		= 0;
+	static uint32_t ADCVALMAP	= 0;
+
 	/* Tomamos una muestra del ADC y la guardamos en el array sin superar el limite de muestras. */
 
-	//if (RECORDING > 0)
-	//{
+	if (RECORDING > 0)
+	{
 		if (*samples_count <= LISTSIZE)
 		{
+			/* Comenzamos a grabar un audio y guardarlo en el array. */
 			LPC_GPIO3->FIOCLR |= (1<<26); 	// Prende el led azul.
 			listADC[*samples_count] = ((LPC_ADC->ADDR0)>>6) & 0x3FF;
 			(*samples_count)++;
 		}
 		else
 		{
-			LPC_GPIO0->FIOCLR |= (1<<22);  	// Prende el led rojo.
+			LPC_GPIO0->FIOSET |= (1<<22);  	// Apaga el led rojo.
 			LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
-			LPC_GPIO3->FIOSET |= (1<<26); 	// Apaga el led azul.
+			LPC_GPIO3->FIOSET |= (1<<26);  	// Apaga el led azul.
 			*samples_count = 0;
 			RECORDING = 0;
 			moveListDAC();
 		}
-
-	//}
-//	else
-//	{
-//		ADCVAL 		= ((LPC_ADC->ADDR1)>>6) & 0x3FF;
-//		ADCVALMAP	= map(ADCVAL, 0, 1024, 8000, 12000);
-//		DAC_SetDMATimeOut(LPC_DAC, ADCVALMAP);
-//	}
-
+	}
+	else if (RECORDING == 0)
+	{
+		/* Si NO estamos grabando variamos la frecuencia de salida del DAC. */
+		ADCVAL 		= ((LPC_ADC->ADDR1)>>6) & 0x3FF;
+		ADCVALMAP	= map(ADCVAL, 0, 1024, 5000, 20000);
+		DAC_SetDMATimeOut(LPC_DAC, ADCVALMAP);
+	}
 
 	LPC_ADC->ADGDR &= LPC_ADC->ADGDR;
 }
@@ -326,9 +407,9 @@ void EINT0_IRQHandler(void)
 	 * la espera de poner en play el sonido.
 	 */
 
-	RECORDING = 1;
-
 	buttonDebounce();
+
+	RECORDING = 1;
 
 	LPC_GPIO0->FIOSET |= (1<<22);  	// Apaga el led rojo.
 	LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
@@ -350,7 +431,7 @@ void EINT1_IRQHandler(void)
 
 	buttonDebounce();
 
-	if (PLAY > 0) //Esta en pausa
+	if (PLAY > 0)
 	{
 		LPC_GPIO3->FIOSET |= (1<<25);  	// Apaga el led verde.
 		LPC_GPIO3->FIOSET |= (1<<26);  	// Apaga el led azul.
@@ -359,7 +440,7 @@ void EINT1_IRQHandler(void)
 		DAC_UpdateValue(LPC_DAC, 0);
 		PLAY = 0;
 	}
-	else //se reproduce
+	else
 	{
 		LPC_GPIO0->FIOSET |= (1<<22);  	// Apaga el led rojo.
 		LPC_GPIO3->FIOSET |= (1<<26);  	// Apaga el led azul.
@@ -370,3 +451,43 @@ void EINT1_IRQHandler(void)
 
 	EXTI_ClearEXTIFlag(EXTI_EINT1);
 }
+
+void UART2_IRQHandler(void){
+	uint32_t intsrc, tmp, tmp1;
+
+	// Determina la fuente de interrupcion
+	intsrc = UART_GetIntId(LPC_UART2);
+	tmp = intsrc & UART_IIR_INTID_MASK;
+
+	// Evalua Line Status
+	if (tmp == UART_IIR_INTID_RLS)
+	{
+		tmp1 = UART_GetLineStatus(LPC_UART2);
+		tmp1 &= (UART_LSR_OE | UART_LSR_PE | UART_LSR_FE | UART_LSR_BI | UART_LSR_RXFE);
+		if (tmp1)
+		{
+			while(1){};		/* ingresa a un loop infinito si hay error */
+		}
+	}
+
+	// Receive Data Available or Character time-out
+	if ((tmp == UART_IIR_INTID_RDA) || (tmp == UART_IIR_INTID_CTI))
+	{
+		UART_Receive(LPC_UART2, info, sizeof(info), NONE_BLOCKING);
+	}
+
+	/* A veces el UART tiene un bug que manda 0 de por medio por eso el condicional. */
+	if ((count_UART < LISTSIZE) & (info[0] != 0))
+	{
+		listADC[count_UART] = (info[0]<<6);
+		count_UART++;
+	}
+
+	if (count_UART >= LISTSIZE)
+	{
+		count_UART = 0;
+	}
+
+	return;
+}
+

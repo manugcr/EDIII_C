@@ -19,7 +19,7 @@ def separate_into_columns(input_file, output_file, array_name="rawData", column_
         output.write("};\n")
 
 if __name__ == "__main__":
-    input_file = "abrazo_hijo.txt"  # Change this to the path of your input text file
+    input_file = "pacman.txt"  # Change this to the path of your input text file
     output_file = "output_array.h"  # Change this to the desired output file
     array_name = "rawData"  # Change this to the desired array name
     column_size = 50  # Change this to the desired number of values per column
