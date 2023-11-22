@@ -1,0 +1,54 @@
+/* Ej 1 Parcial 2022
+ *
+ * Realizar un programa que guarde mediante interrupcion el dato presente en los pines de entrada
+ * P2[7:0] cada vez que cambie su valor. Cada dato nuevo debe guardarse de forma consecutiva en
+ * una region de memoria que permita tener disponible siempre los ultimos 16 datos guardados.
+ *
+ */
+
+#include "LPC17xx.h"
+
+void confGPIO(void);
+
+uint32_t values[16] = {0};
+
+int main(void)
+{
+	confGPIO();
+
+	while(1){}
+
+	return 0;
+}
+
+void confGPIO()
+{
+	LPC_PINCON->PINSEL4		|=	(0xFF<<0);		// P2[7:0] como GPIO
+	LPC_GPIO2->FIODIR		&=~ (0xFF<<0);		// P2[7:0] como input
+	LPC_PINCON->PINMODE4	|=	(2<<0)			// Ni pull up in pull down.
+							| (2<<2)
+							| (2<<4)
+							| (2<<6);
+
+	// Interrupciones por GPIO
+	LPC_GPIOINT->IO2IntEnR	|=	(0xFF<<0);		// P2[7:0] interrupciones flanco asc.
+	LPC_GPIOINT->IO2IntEnF	|=	(0xFF<<0);		// P2[7:0] interrupciones flanco desc.
+	LPC_GPIOINT->IO2IntClr	|=	(0xFF<<0);		// Limpio las flags de interrupcion.
+
+	NVIC_EnableIRQ(EINT3_IRQn);
+}
+
+void EINT3_IRQHandler(void)
+{
+	static uint8_t count = 0;
+
+	values[count] = (LPC_GPIO2->FIOPIN) & 0xF;
+
+	count++;
+	if (count == 16)
+		count = 0;
+
+	LPC_GPIOINT->IO2IntClr	|=	(0xFF<<0);		// Limpio las flags de interrupcion.
+}
+
+

@@ -1,0 +1,108 @@
+/*
+* Estudiante: Damián Marcelo González
+* Carrera: Ingeniería en Computación
+* Descripción: Modelo de parcial 1.pdf, ejercicio 1.
+*
+* Título de consigna: EJERCICION N° 1: (30 %)
+* Consigna: Programar el microcontrolador LPC1769 para que mediante su ADC
+* digitalice dos señales analógicas cuyos anchos de bandas son de 10 Khz cada
+* una. Los canales utilizados deben ser el 2 y el 4 y los datos deben ser
+* guardados en dos regiones de memorias distintas que permitan contar con los
+* últimos 20 datos de cada canal. Suponer una frecuencia de core cclk de 100
+* Mhz. El código debe estar debidamente comentado.
+*
+* Notas de las solución: Canal 2 del ADC corresponde al pin P0.25; canal 4
+* corresponde al pin P1.30. El ADC debe muestrear a 40 kHz, ya que la frecuencia
+* de muestreo por canal debería ser de 20 kHz, como hay dos, entonces la
+* frecuencia de muestreo deberá ser de 40 kHz. En modo burst toma 64 pasos.
+* 40 kHz * 64 = 2,56 MHz debería ser la frecuencia de trabajo del ADC para que
+* la frecuencia de muestreo sea de 40 kHz. Gracias al "driver", del seteo fino
+* se encarga él, yo solamente paso 40000 Hz como parametro de inicialización
+* del periférico.
+*/
+
+/* macros */
+#define ADC_SPEED         ((40000))
+#define SAMPLES_SAVED     ((20))
+
+
+/* libs included */
+#include "LPC17xx.h"
+#include "lpc17xx_pinsel.h"
+#include "lpc17xx_adc.h"
+
+
+/* func declarations */
+void config_adc(void);
+void config_adc_pins(void);
+void maker_room_for_new_data(uint16_t* signal_data);
+
+
+/* global variables */
+uint16_t signal_2_data[SAMPLES_SAVED] = {0};
+uint16_t signal_4_data[SAMPLES_SAVED] = {0};
+
+
+/* func definitions */
+int main(void) {
+
+  config_adc();
+  while(1);
+
+  return 0;
+}
+
+
+void config_adc(void) {
+  // initialize ADC
+  ADC_Init(LPC_ADC, ADC_SPEED);
+  config_adc_pins();
+  // set channels to use
+  ADC_ChannelCmd(LPC_ADC, 2, ENABLE);
+  ADC_ChannelCmd(LPC_ADC, 4, ENABLE);
+  // enable burst mode
+  ADC_BurstCmd(LPC_ADC, ENABLE);
+  // enable interruptions
+  NVIC_EnableIRQ(ADC_IRQn);
+}
+
+
+void config_adc_pins(void) {
+  // P0.25
+  PINSEL_CFG_Type pin_0_25;
+  pin_0_25.Portnum = PINSEL_PORT_0;
+  pin_0_25.Pinnum = PINSEL_PIN_25;
+  pin_0_25.Funcnum = PINSEL_FUNC_1;
+  pin_0_25.Pinmode = PINSEL_PINMODE_TRISTATE;
+  pin_0_25.OpenDrain = PINSEL_PINMODE_NORMAL;
+  PINSEL_ConfigPin(&pin_0_25);
+  // P1.30
+  PINSEL_CFG_Type pin_1_30;
+  pin_1_30.Portnum = PINSEL_PORT_1;
+  pin_1_30.Pinnum = PINSEL_PIN_30;
+  pin_1_30.Funcnum = PINSEL_FUNC_2;
+  pin_1_30.Pinmode = PINSEL_PINMODE_TRISTATE;
+  pin_1_30.OpenDrain = PINSEL_PINMODE_NORMAL;
+  PINSEL_ConfigPin(&pin_1_30);
+}
+
+
+void ADC_IRQHandler(void) {
+  // discover which of both input produced the interrupt
+  if(ADC_ChannelGetStatus(LPC_ADC, 2, 1) == SET) {
+    // channel 2 interrupted
+    maker_room_for_new_data(signal_2_data);
+    signal_2_data[0] = (uint16_t)((ADC_ChannelGetData(LPC_ADC, 2)>>4) & (0xFFF));
+  } else {
+    // channel 4 interrupted
+    maker_room_for_new_data(signal_4_data);
+    signal_4_data[0] = (uint16_t)((ADC_ChannelGetData(LPC_ADC, 4)>>4) & (0xFFF));
+  }
+}
+
+
+void maker_room_for_new_data(uint16_t* signal_data) {
+  for(int8_t i = (SAMPLES_SAVED - 2); i >= 0; i--) {
+    signal_data[i + 1] = signal_data[i];
+  }
+}

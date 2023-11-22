@@ -1,0 +1,87 @@
+/* Ej 2 Parcial 2022
+ *
+ * Utilizando interrupciones por Systick y por eventos externos EINT, realizar un programa que permita
+ * habilitar y deshabilitar el temporizador por el flanco ascendente en el P2.11. El temporizador debe
+ * desbordar cada 10ms utulizando el cclk = 62MHz. Por cada interrupcion de systick debe mostrar por
+ * el puerto 0 el promedio de los valores guardados en uint8_t values[8]. Se pide ademas detallar los
+ * calculos realizados para obtener el valor a cargar en el registro RELOAD y asegurar que la
+ * interrupcion por Systick sea mayor que la prioridad de la interrupcion del evento externo.
+ *
+ * 10[ms]*62[MHz] ---> 620000
+ *
+ */
+
+#include "LPC17xx.h"
+
+void confGPIO(void);
+void confEINT(void);
+void confSYSTICK(void);
+
+uint32_t values[8] = {0};
+
+
+int main(void)
+{
+	confGPIO();
+	confEINT();
+	confSYSTICK();
+
+	while(1){}
+
+	return 0;
+}
+
+
+void confGPIO(void)
+{
+	LPC_GPIO0->FIODIR		|= 	(0xFF<<0);		// P0[7:0] como output.
+	LPC_GPIO0->FIOMASK		=	0xFFFFFF00;		// Enmascaro los pines que no voy a usar.
+
+	LPC_GPIO2->FIODIR		|= 	(0x1<<11);		// P2.11 como input.
+	LPC_PINCON->PINSEL4		|=	(0x1<<22);		// P2.11 como EINT2
+	LPC_PINCON->PINMODE4	&=~	(0x3<<0);		// P2.11 como pullup
+}
+
+
+void confEINT(void)
+{
+	LPC_SC->EXTMODE		&=~	(0x1<<2);			// EINT2 por flanco.
+	LPC_SC->EXTPOLAR	|=	(0x1<<2);			// EINT2 por flanco asc.
+	LPC_SC->EXTINT		|=	(0x1<<2);			// Limpio la flag de interrupcion.
+	NVIC_SetPriority(EINT2_IRQn, 1);
+	NVIC_EnableIRQ(EINT2_IRQn);
+}
+
+
+void confSYSTICK()
+{
+	if (SysTick_Config(620000)){
+		while (1);								// Si hay un error en la carga se queda aca.
+	}
+
+	NVIC_SetPriority(SysTick_IRQn, 0);
+}
+
+
+void EINT2_IRQHandler(void)
+{
+	SysTick->CTRL	^=	(0x1<<1);				// Habilito o deshabilito interrupciones de systick
+
+	LPC_SC->EXTINT	|=	(0x1<<2);				// Limpio la flag de interrupcion.
+}
+
+
+void SysTick_Handler(void)
+{
+	static uint8_t avg = 0;
+
+	for (int i=0 ; i<8 ; i++)
+		avg += values[i];
+
+	avg = avg/8;
+
+	LPC_GPIO0->FIOPIN	=	avg;
+
+	SysTick->CTRL &= SysTick->CTRL;				// Limpio la flag de interrupcion
+}
+

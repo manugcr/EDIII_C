@@ -1,0 +1,38 @@
+## Describa las diferentes caracteristicas electricas de los pines de los puertos a tener en cuenta en un disenio.
+Los puertos GPIO pueden funciona como ALTO (Vdd) o BAJO (GND). Estos voltajes pueden variar y no siempre son 5[v]-0[v] si no que tienen una zona de incertidumbre donde el fabricante no puede asegurar si esa salida se toma como un 0 o 1 logico. Las zonas donde se toma un 1 logico como salida son {Vdd, Vdd-0.4} [V] y la zona donde se toma un 0 logico como salida es {0.4, 0} [V]. Para la entrada la zona de 1 logico es {Vdd, 0.7*Vdd} [V] y la zona de 0 logico es {0.3*Vdd, 0} [V].
+
+
+
+
+
+## Suponga que el microcontrolador LPC1769 esta atendiendo a una interrupcoin de prioridad 6 y llega una interrupcion con prioridad 5, explique lo que sucede, en lo referente a registros, diagramas de tiempo y estados de las interrupciones.
+
+
+
+
+
+## Explique que significa que el Cortex M3 tenga una arquitectura LOAD/STORE y remarque las diferencias con otras arquitecturas.
+Una arquitectura de almacenamiento de carga LOAD/STORE divide las instrucciones en dos categorias, acceso a la memoria y operaciones ALU. Por ejemplo en un enfoque LOAD/STORE tanto los operandos como el destino de una operacion SUMA deben estar en registros. Esto difiere de una arquitectura de registro-memoria (Por ejemplo una arquitectura de conjunto de instrucciones CISC como x86) en la que uno de los operandos para la operacion SUMA puede estar en la memoria, mientras que el otro esta en un registro.
+
+Tambien existen conjuntos de instrucciones RISC (Reduced Instruction Set Computer) y CISC (Complex Instruction Set Computer).
+                    RISC                    CISC
+Instrucciones:      Simples y Pocas         Complejas y Muchas
+Programacion:       Compleja                Sencilla
+Carga de proce:     Software                Hardware
+Veloci. de proce:   Menor                   Mayor
+Costo de fabri:     Menor                   Mayor
+Instruc. set.       LOAD/STORE              -
+
+ARM (Advanced RISC Machines) es una familia de arquitecturas de conjunto de instrucciones RISC para procesador de computadoras. ARM Holding (Empresa) vende inteligencia, no es el nombre de ningun chip. Los microcontroladores Cortex-M3 son construidos con una capacidad de 32 bits y en general existen tres clasificaciones ARM. Cortex-A, Cortex-R, Cortex-M.
+
+
+
+
+
+## Explique el funcionamiento del NVIC ante la llegada de una interrupcion. Suponga la llegada de una interrupcion cuya ID es 18 correspondiente a EINT0 describa lo que sucede considerendo que la ISR se encuentra en la posicion de memoria 0x0800030C.
+
+
+
+
+
+## Considere un sistema basado en la LPC1769 que puede manejar dos interrupciones, que llamaremos interrupcion 1 e interrupcion 2. Considere que la interrupcion 1 es de prioridad 3 y la interrupcion 2 es de prioridad 5. Dibuje el diagrama de tiempos de lo que sucede, contemplando los distintos casos que se pueden dar y explique brevemente.

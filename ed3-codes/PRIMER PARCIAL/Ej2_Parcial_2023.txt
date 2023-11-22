@@ -1,0 +1,77 @@
+/* Ej 2 Parcial 2023
+ *
+ * Utilizando interrupciones por GPIO realizar un codigo en C que permita, mediante 4 pines de entrada
+ * GPIO leer y guardar el numero compuesto por 4 bits. Dicho numero puede ser cambiado por un usuario
+ * mediante 4 switches, los cuales cuentan con sus respectivas resistencias pull up externas. El
+ * almacenamiento debe realizarse en una variable del tipo array de forma tal que se asegure tener
+ * disponible siempre los ultimos 10 numeros elegidos por el usuario, garantizado ademas que el numero
+ * ingresado mas antiguo, de este conjunto de 10, se cuentre en el elemento 9 y el numero actual en
+ * el elemento 0 de dicho array. La interrupcion por GPIO empezara teniendo la maxima prioridad de
+ * interrupcion posible y cada 200 numeros ingresados debera disminuir en 1 su prioridad hasta alcanzar
+ * la minima posible. Llegado este momento el programa debera deshabilitara todo tipo de interrupciones
+ * producidas por las entradas GPIO.
+ *
+ */
+
+#include "LPC17xx.h"
+
+void confGPIO(void);
+void confGPIOINT(void);
+
+uint32_t values[10] = {0};
+uint32_t PRIORITY	= 0;
+
+int main(void)
+{
+	confGPIO();
+
+	while(1)
+	{
+		if (PRIORITY == 31)
+			NVIC_DisableIRQ(EINT3_IRQn);
+	}
+
+	return 0;
+}
+
+
+void confGPIO(void)
+{
+	LPC_PINCON->PINSEL0		&=~	(0xFF<<0);							// P0[3:0] como GPIO.
+	LPC_PINCON->PINMODE0	|=	(2<<0) | (2<<2) | (2<<4) | (2<<6);	// P0[3:0] ni pullup ni pulldown.
+	LPC_GPIO0->FIODIR		&=~	(0xFF<<0);							// P0[3:0] como input.
+}
+
+
+void confGPIOINT(void)
+{
+	LPC_GPIOINT->IO0IntEnR	|= (0xF<<0);	// P0[3:0] interrupciones flanco asc
+	LPC_GPIOINT->IO0IntEnF	|= (0xF<<0);	// P0[3:0] interrupciones flanco desc
+
+	LPC_GPIOINT->IO0IntClr	|= (0xF<<0);	// Limpio las flags de interrupcion.
+
+	NVIC_SetPriority(EINT3_IRQn, PRIORITY);
+	NVIC_EnableIRQ(EINT3_IRQn);
+}
+
+
+void EINT3_IRQHandler(void)
+{
+	uint8_t current_value	= (LPC_GPIO0->FIOPIN) & 0xF;
+	uint8_t count			= 0;			// Llevo el control de cuantos numeros ingrese.
+
+	for (int i=9 ; i>0 ; i--)				// Desplazo los valores del array.
+		values[i] = values[i-1];
+
+	values[0] = current_value;
+
+	count++;
+	if (count == 200)
+	{
+		NVIC_SetPriority(EINT3_IRQn, ++PRIORITY);
+		count = 0;
+	}
+
+	LPC_GPIOINT->IO0IntClr	|= (0xF<<0);	// Limpio las flags de interrupcion.
+}
+

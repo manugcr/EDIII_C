@@ -1,0 +1,16 @@
+/*
+Considere la región de memoria a partir de la dirección 0x10003000, de 2048 datos de tipo entero de 16 bits, sin signo. Estos son datos provenientes de 4 canales del ADC, siendo el primero del canal 0, el segundo del canal 1, el tercero del canal 2 y el cuarto del canal 3, el quinto del canal 0 y así sucesivamente, estos datos están guardados en binario natural, tal como los entrega el ADC. 
+Realice un algoritmo que calcule el promedio total de cada uno de los canales y guarde el valor del promedio de cada canal en un arreglo de 4 elementos.
+Suponiendo que los valores de tensión corresponden a un sensor de temperatura cuya curva se puede ver en la siguiente gráfica. Calcule la resolución en temperatura (valor del escalón mínimo de temperatura que puede distinguirse con un conversor A/D de 12 bits)
+*/
+
+
+
+
+
+
+Resolucion -->  3.3[v]-0[v] / 4096  = 0.8 [mV] por escalon.
+                160[c] / 4096     = 0.039 [c] por escalon.
+
+                160[c] _______ 3.3[v]
+                 80[c] _______ x = 80*3.3 / 160 = 1.65 [mV] 

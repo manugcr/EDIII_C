@@ -1,0 +1,38 @@
+a) El canal 0 del DMA (maxima prioridad) queda configurado para transmitir datos de memoria desde datos_1_global hacia el DAC para convertirlos a una senal analogica, la LLI queda configurada como una lista circular la cual se va sobreescribiendo en si misma de manera periodica. Source transfer width queda configurado como 32 bits, y destination transfer width queda como 32 bits, con un incremento del source por cada vez que se transfiere un dato.
+b) Se transfieren uint32_t desde datos_1_global hacia el DAC, una cantidad de veces dada por TOTAL_SAMPLES.
+c) El tiempo de transferencia se da en el timeout cuando se configura el DAC:
+    timeout --->    1/fdac __________ 1 cuenta ---> fdac/fsen*N
+                    1/fsen*N ________ x
+
+void confDMA(void)
+{
+	GPDMA_LLI_Type DMA_LLI_Struct0;
+	GPDMA_LLI_Type DMA_LLI_Struct1;
+	DMA_LLI_Struct0.SrcAddr	= (uint32_t) datos_1_global;
+	DMA_LLI_Struct0.DstAddr	= (uint32_t) &(LPC_DAC->DACR);
+	DMA_LLI_Struct0.NextLLI	= (uint32_t) &DMA_LLI_Struct0;
+	DMA_LLI_Struct0.Control	= TOTAL_SAMPLES
+							| (2<<18)
+							| (2<<21)
+							| (1<<26);
+	DMA_LLI_Struct1.SrcAddr	= (uint32_t) datos_2_global;
+	DMA_LLI_Struct1.DstAddr	= (uint32_t) &(LPC_DAC->DACR);
+	DMA_LLI_Struct1.NextLLI	= 0;
+	DMA_LLI_Struct1.Control	= TOTAL_SAMPLES
+							| (2<<18)
+							| (2<<21)
+							| (1<<26);
+	GPDMA_Init();
+	GPDMACfg.ChannelNum		= 0;
+	GPDMACfg.SrcMemAddr		= (uint32_t) datos_1_global;
+	GPDMACfg.DstMemAddr		= 0;
+	GPDMACfg.TransferSize	= TOTAL_SAMPLES;
+	GPDMACfg.TransferWidth	= 0;
+	GPDMACfg.TransferType	= GPDMA_TRANSFERTYPE_M2P;
+	GPDMACfg.SrcConn		= 0;
+	GPDMACfg.DstConn		= GPDMA_CONN_DAC;
+	GPDMACfg.DMALLI			= (uint32_t) &DMA_LLI_Struct0;
+	GPDMA_Setup(&GPDMACfg);
+
+	return;
+}

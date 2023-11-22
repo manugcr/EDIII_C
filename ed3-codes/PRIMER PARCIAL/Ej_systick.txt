@@ -1,0 +1,93 @@
+/* Ej Parcial virtual
+ *
+ * Utilizando SysTick programar al microcontrolador para que cada vez que se produzca una interrupcion
+ * por flanco ascdendente por el pin P2.4 se saque por P2.5 la secuencia mostrada en la figura. En caso
+ * de que se produzca una nueva interrupcion por P2.4 mientras se esta realizando la secuencia, esta
+ * volvera a realizarse desde su inicio. El Programa no debe hacer uso de retardos por software y
+ * deben enmascararse bits del puerto 2 que no se usen. Suponer una frecuencia de 80MHz.
+ *
+ *
+ *		<-20->               <--40-->	[ms]
+ *		<10>                         	[ms]
+ *		__    __    __    __          __    __    __    __
+ *		  |__|  |__|  |__|  |________|  |__|  |__|  |__|  |______
+ *
+ *
+ * 10[ms]*80[MHz] --> 800000
+ *
+ */
+
+#include "LPC17xx.h"
+
+void confGPIO(void);
+void confSYSTICK(void);
+
+
+int main(void)
+{
+	confGPIO();
+	confSYSTICK();
+
+	LPC_GPIO2->FIOSET = (0x1<<5);
+
+	while(1){}
+
+	return 0;
+}
+
+
+void confGPIO(void)
+{
+	LPC_PINCON->PINSEL4		&=~	(0x3<<8);		// P2.4 como GPIO.
+	LPC_PINCON->PINMODE4	|=	(0x3<<8);		// P.24 pullup.
+	LPC_GPIO2->FIODIR		&=~	(0x1<<4);		// P2.4 como input.
+	LPC_GPIO2->FIODIR		|=	(0x1<<5);		// P2.5 como output.
+	LPC_GPIO2->FIOMASK		=	0xFFFFFFDF;		// Enmascaro todo menos el P2.5 --> 1111 1101 1111
+
+	// Interrupciones GPIO P2.5
+	LPC_GPIOINT->IO2IntEnF	|=	(0x1<<5);		// Interrupciones por flanco desc.
+	LPC_GPIOINT->IO2IntClr	|=	(0x1<<5);		// Limpio flag de interrupcion.
+	NVIC_EnableIRQ(EINT3_IRQn);
+}
+
+
+void confSYSTICK()
+{
+	if (SysTick_Config(800000)){
+		while (1);								// Si hay un error en la carga se queda aca.
+	}
+}
+
+
+void EINT3_IRQHandler(void)
+{
+	SysTick->CTRL			^=	(0x1<<1);		// Habilito/Deshabilito interrupcion del systick.
+	LPC_GPIO2->FIOSET		=	(0x1<<5);		// Dejo la salida en alto.
+
+	LPC_GPIOINT->IO2IntClr	|=	(0x1<<5);		// Limpio flag de interrupcion.
+}
+
+
+void SysTick_Handler(void)
+{
+	static uint8_t state_1 = 1;					// Estado toggle cada 10[ms]
+	static uint8_t state_2 = 0;					// Estado bajo por 40[ms]
+	static uint8_t count = 0;
+
+	if (count == 4)
+	{
+		state_1	= 0;
+		state_2 = 1;
+		count = 0;
+	}
+
+	if (state_1)
+		LPC_GPIO2->FIOPIN ^= (LPC_GPIO2->FIOPIN) & (0x1<<5);
+
+	if (state_2)
+		LPC_GPIO2->FIOCLR = (0x1<<5);
+
+	count++;
+	SysTick->CTRL &= SysTick->CTRL;				// Limpio la flag de interrupcion
+}
+
